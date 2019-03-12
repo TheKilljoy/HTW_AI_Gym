@@ -11,7 +11,7 @@ from keras.layers import Dense, Dropout, Flatten
 from keras.layers import Conv2D, MaxPooling2D
 from collections import deque
 
-EPISODES = 10
+EPISODES = 100
 MAX_STEPS = 50000
 STACK_SIZE = 4
 BATCH_SIZE = 64
@@ -59,24 +59,62 @@ def stack_frames(stacked_frames, state, is_new_episode):
         stacked_frames.append(frame)
         stacked_frames.append(frame)
         stacked_state = np.stack(stacked_frames, axis=2)
-        stacked_state = np.expand_dims(stacked_state, 0)
+        #stacked_state = np.expand_dims(stacked_state, 0)
     else:
         stacked_frames.append(frame)
         stacked_state = np.stack(stacked_frames, axis=2)
-        stacked_state = np.expand_dims(stacked_state, 0)
+        #stacked_state = np.expand_dims(stacked_state, 0)
     return stacked_state, stacked_frames
 
-def predict_action(explore_start, explore_stop, decay_rate, decay_step, state, actions):
+def predict_action(decay_step, state, actions):
     exp_exp_tradeoff = np.random.rand()
     explore_probability = explore_stop + (explore_start - explore_stop) * np.exp(-decay_rate * decay_step)
     if explore_probability > exp_exp_tradeoff:
         choice = random.randint(1, len(possible_actions)) -1
         action = possible_actions[choice]
     else:
-        Qs = model.predict(state)
+        print("neural network")
+        Qs = model.predict(np.expand_dims(state, 0))
         choice = np.argmax(Qs)
         action = possible_actions[choice]
     return np.argmax(action), explore_probability
+
+def train(total_loss):
+    batch = memory.sample(BATCH_SIZE)
+    targets = np.zeros((BATCH_SIZE, len(possible_actions))) 
+    for i in range(BATCH_SIZE):
+        #0 = states
+        #1 = actions
+        #2 = rewards
+        #3 = next_states
+        #4 = dones
+        targets[i] = model.predict(np.expand_dims(batch[i][0], 0))
+        fut_action = model.predict(np.expand_dims(batch[i][3], 0))
+        targets[i, batch[i][1]] = batch[i][2]
+        if batch[i][4] == False:
+            targets[i, batch[i][1]] += decay_rate * np.max(fut_action)
+
+    states_mb = deque(maxlen=BATCH_SIZE)
+    for b in batch:
+        states_mb.append(b[0])
+    states_mb = np.stack(states_mb, axis=0)
+    loss = model.train_on_batch(states_mb, targets)
+    total_loss += loss[0]
+    return total_loss
+
+# #force keras to run on gpu
+# num_cores = 12
+# num_GPU = 1
+# num_CPU = 1
+
+# config = tf.ConfigProto(intra_op_parallelism_threads=num_cores,
+#                         inter_op_parallelism_threads=num_cores,
+#                         allow_soft_placement=True,
+#                         log_device_placement=True,
+#                         device_count = {'CPU' : num_CPU,
+#                                         'GPU' : num_GPU})
+# session = tf.Session(config=config)
+#k.set_session(session)
 
 #create neural network
 model = Sequential()
@@ -104,6 +142,8 @@ model.add(Dense(units=4, #action_space = 4
 model.compile(loss=keras.losses.mean_squared_error,
               optimizer=keras.optimizers.RMSprop(lr=0.001),
               metrics=['accuracy'])
+
+model.load_weights('my_model_weights.h5')
 
 memory = Memory(max_size = MEMORY_SIZE)
 
@@ -164,15 +204,25 @@ for i in range(PRETRAIN_LENGTH):
 #         target_Qs_batch = []
 #         Qs_next_state = model.predict(next_state)
 
-
+total_loss = 0.0
 for episode in range(EPISODES):
     state = env.reset()
-    stacked_state, stacked_frames = stack_frames(stacked_frames, state, True)
+    prev_state, stacked_frames = stack_frames(stacked_frames, state, True)
+    decay_step = 0
     for _ in range(MAX_STEPS):
+        decay_step += 1
+        action, probability = predict_action(decay_step, prev_state, possible_actions)
+        state, reward, done, info = env.step(action) # take a random action
+        stacked_state, stacked_frames = stack_frames(stacked_frames, state, False)
+        memory.add((prev_state, action, reward, stacked_state, done))
+        prev_state = stacked_state
         if RENDER_EPISODE:
             env.render()
-        state, reward, done, info = env.step(env.action_space.sample()) # take a random action
         if done:
             break
-        stacked_state, stacked_frames = stack_frames(stacked_frames, state, False)
-        print("Model prediction: {0}".format(np.argmax(model.predict(stacked_state))))
+        total_loss = train(total_loss)
+    print("total loss: {0}".format(total_loss))
+    total_loss = 0.0
+
+#save weights
+model.save_weights('my_model_weights.h5')
