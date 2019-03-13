@@ -10,18 +10,22 @@ from keras.models import Sequential
 from keras.layers import Dense, Dropout, Flatten
 from keras.layers import Conv2D, MaxPooling2D
 from collections import deque
+import matplotlib.pyplot as plt
 
-EPISODES = 100
+EPISODES = 1000
 MAX_STEPS = 50000
 STACK_SIZE = 4
 BATCH_SIZE = 64
-MEMORY_SIZE = 1000000
+MEMORY_SIZE = 2000
 PRETRAIN_LENGTH = BATCH_SIZE
 GAMMA = 0.9
 RENDER_EPISODE = True
 explore_start = 1.0
 explore_stop = 0.01
-decay_rate = 0.00001
+decay_rate = 0.00005
+decay_step = 0
+neural_network_active = 0
+neural_network_total = 0
 
 env = gym.make('Breakout-v0')
 possible_actions = np.array(np.identity(env.action_space.n, dtype=int).tolist())
@@ -40,6 +44,9 @@ class Memory():
                                 size=batch_size,
                                 replace=False)
         return [self.buffer[i] for i in index]
+
+    def current_size(self):
+       return self.buffer.__len__()
 
 def preprocess_frame(frame):
     #preprocess image
@@ -66,14 +73,17 @@ def stack_frames(stacked_frames, state, is_new_episode):
         #stacked_state = np.expand_dims(stacked_state, 0)
     return stacked_state, stacked_frames
 
+
+
 def predict_action(decay_step, state, actions):
+    global neural_network_active
     exp_exp_tradeoff = np.random.rand()
     explore_probability = explore_stop + (explore_start - explore_stop) * np.exp(-decay_rate * decay_step)
     if explore_probability > exp_exp_tradeoff:
         choice = random.randint(1, len(possible_actions)) -1
         action = possible_actions[choice]
     else:
-        print("neural network")
+        neural_network_active += 1
         Qs = model.predict(np.expand_dims(state, 0))
         choice = np.argmax(Qs)
         action = possible_actions[choice]
@@ -101,20 +111,6 @@ def train(total_loss):
     loss = model.train_on_batch(states_mb, targets)
     total_loss += loss[0]
     return total_loss
-
-# #force keras to run on gpu
-# num_cores = 12
-# num_GPU = 1
-# num_CPU = 1
-
-# config = tf.ConfigProto(intra_op_parallelism_threads=num_cores,
-#                         inter_op_parallelism_threads=num_cores,
-#                         allow_soft_placement=True,
-#                         log_device_placement=True,
-#                         device_count = {'CPU' : num_CPU,
-#                                         'GPU' : num_GPU})
-# session = tf.Session(config=config)
-#k.set_session(session)
 
 #create neural network
 model = Sequential()
@@ -168,49 +164,22 @@ for i in range(PRETRAIN_LENGTH):
         memory.add((state, action, reward, next_state, done))
         state = next_state
 
-# decay_step = 0
-# for episode in range(EPISODES):
-#     step = 0
-#     episode_rewards = []
-#     state = env.reset()
-#     state, stacked_frames = stack_frames(stacked_frames, state, True)
-
-#     while step < MAX_STEPS:
-#         step += 1
-#         decay_step += 1
-#         action, explore_probability = predict_action(explore_start, explore_stop, decay_rate, decay_step, state, possible_actions)
-#         next_state, reward, done, info = env.step(action)
-#         if RENDER_EPISODE:
-#             env.render()
-#         episode_rewards.append(reward)
-#         if done:
-#             next_state = np.zeros((87, 80), dtype=np.int)
-#             next_state, stacked_frames = stack_frames(stacked_frames, next_state, False)
-#             step = MAX_STEPS
-#             total_reward = np.sum(episode_rewards)
-#             #rewards_list.append((episode, total_reward))
-#             memory.add((state, action, reward, next_state, done))
-#         else:
-#             next_state, stacked_frames = stack_frames(stacked_frames, next_state, False)
-#             memory.add((state, action, reward, next_state, done))
-#             state = next_state
-#         #learning part
-#         batch = memory.sample(BATCH_SIZE)
-#         states_mb = np.array([each[0] for each in batch], ndmin=3)
-#         actions_mb = np.array([each[1] for each in batch])
-#         rewards_mb = np.array([each[2] for each in batch]) 
-#         next_states_mb = np.array([each[3] for each in batch], ndmin=3)
-#         dones_mb = np.array([each[4] for each in batch])
-#         target_Qs_batch = []
-#         Qs_next_state = model.predict(next_state)
-
 total_loss = 0.0
+episode_x = []
+total_loss_y = []
+neural_network_active_list = []
+plt.xlabel('episode')
+plt.ylabel('total_loss')
+plt.title('ai agent learns breakout')
+f = open("losses.txt",'a+')
+episodeCounter = 0
 for episode in range(EPISODES):
+    episodeCounter += 1
     state = env.reset()
     prev_state, stacked_frames = stack_frames(stacked_frames, state, True)
-    decay_step = 0
     for _ in range(MAX_STEPS):
         decay_step += 1
+        neural_network_total += 1
         action, probability = predict_action(decay_step, prev_state, possible_actions)
         state, reward, done, info = env.step(action) # take a random action
         stacked_state, stacked_frames = stack_frames(stacked_frames, state, False)
@@ -221,8 +190,17 @@ for episode in range(EPISODES):
         if done:
             break
         total_loss = train(total_loss)
-    print("total loss: {0}".format(total_loss))
+    f.write("episode {0} total_loss: {1} with {2} explore probability\n".format(episodeCounter, total_loss, explore_stop + (explore_start - explore_stop) * np.exp(-decay_rate * decay_step)))
+    episode_x.append(episode)
+    total_loss_y.append(total_loss)
+    neural_network_active_list.append((neural_network_active / neural_network_total) * 100)
+    plt.plot(episode_x, total_loss_y, color='green')
+    plt.plot(episode_x, (neural_network_active_list), color='blue')
+    plt.savefig('ai_agent_graph.png')
+    if episodeCounter % 5 == 0:
+        f.close
+        f = open("losses.txt", 'a+')
+        model.save_weights('my_model_weights.h5')
     total_loss = 0.0
-
-#save weights
+#save final weights
 model.save_weights('my_model_weights.h5')
