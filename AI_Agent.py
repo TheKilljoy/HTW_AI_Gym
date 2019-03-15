@@ -53,8 +53,7 @@ def preprocess_frame(frame):
     preprocessed_image = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
     preprocessed_image = cv2.resize(preprocessed_image, (84, 110))
     preprocessed_image = preprocessed_image[15:-8, 2:-2]
-    #normalize image
-    preprocessed_image = preprocessed_image/255.0
+
     return preprocessed_image
 
 def stack_frames(stacked_frames, state, is_new_episode):
