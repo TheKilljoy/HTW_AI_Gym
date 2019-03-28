@@ -1,51 +1,56 @@
 import re
 import matplotlib.pyplot as plt
 import argparse
+import os
 
 iteration = 0
 reward = 0.0
 probability = 0.0
 loss = 0.0
+step = 0
 iterations = []
 rewards = []
 probabilities = []
 losses = []
+steps = []
 
 avg = 100
 
 def extract_values(line):
     values = re.findall(r"[-+]?\d*\.\d+|\d+", line)
-    return (values[0], values[1], values[2], values[3])
+    return (values[0], values[1], values[2], values[3], values[4])
 
-def sum_values(temp_it, temp_re, temp_pr, temp_loss):
+def sum_values(temp_it, temp_re, temp_step, temp_pr, temp_loss):
     global probability
     global reward
+    global step
     global iteration
     global loss
     iteration = int(temp_it)
+    step = int(temp_step)
     reward += float(temp_re)
-    probability += float(temp_pr)
+    probability += (1.0 - float(temp_pr))
     loss += float(temp_loss)
 
-def write_to_list():
+def write_to_list(average):
     global reward
     global probability
+    global step
     global iteration
     global loss
-    reward /= avg
-    probability /= avg
-    loss /= avg
+    reward /= average
+    probability /= average
+    loss /= average
     iterations.append(iteration)
     rewards.append(reward)
+    steps.append(step)
     probabilities.append(probability)
     losses.append(loss)
 
 def reset_values():
     global reward
-    global propability
     global loss
     reward = 0
-    probability = 0
     loss = 0
 
 
@@ -61,17 +66,21 @@ fobj = open(filepath[0], "r")
 for line in fobj:
     if iteration % avg == 0:
         counter = 0
-        write_to_list()
+        write_to_list(avg)
         reset_values()
-    temp_iteration, temp_reward, temp_probability, temp_loss = extract_values(line)
-    sum_values(temp_iteration, temp_reward, temp_probability, temp_loss)
+    temp_iteration, temp_reward, temp_step, temp_probability, temp_loss = extract_values(line)
+    sum_values(temp_iteration, temp_reward, temp_step, temp_probability, temp_loss)
 
+#if the folder doesn't exist, create it
+if not os.path.exists("./average_{0}".format(int(avg))):
+    os.makedirs("./average_{0}".format(int(avg)))
+########## episodes ###############
 plt.figure(figsize=(30,10))
 plt.plot(iterations, rewards)
 plt.grid(True)
 plt.xlabel("episodes")
 plt.ylabel("reward")
-plt.savefig('iteration_rewards{0}.png'.format(avg))
+plt.savefig('./average_{0}/episodes_rewards{0}.png'.format(int(avg)))
 plt.clf()
 
 plt.figure(figsize=(30,10))
@@ -79,15 +88,15 @@ plt.plot(iterations, probabilities)
 plt.grid(True)
 plt.xlabel("episodes")
 plt.ylabel("probability neural network acts")
-plt.savefig('iteration_probability{0}.png'.format(avg))
+plt.savefig('./average_{0}/episodes_probability{0}.png'.format(int(avg)))
 plt.clf()
 
 plt.figure(figsize=(30,10))
 plt.plot(iterations, losses)
 plt.grid(True)
-plt.xlabel("losses")
-plt.ylabel("probability neural network acts")
-plt.savefig('iteration_loss{0}.png'.format(avg))
+plt.xlabel("episodes")
+plt.ylabel("losses")
+plt.savefig('./average_{0}/episodes_loss{0}.png'.format(int(avg)))
 plt.clf()
 
 plt.figure(figsize=(30,10))
@@ -95,6 +104,29 @@ plt.plot(probabilities, rewards)
 plt.grid(True)
 plt.xlabel("probability neural network acts")
 plt.ylabel("reward")
-plt.savefig('probability_rewards{0}.png'.format(avg))
+plt.savefig('./average_{0}/probability_rewards{0}.png'.format(int(avg)))
+plt.clf()
+############## steps #################
+plt.figure(figsize=(30,10))
+plt.plot(steps, rewards)
+plt.grid(True)
+plt.xlabel("steps")
+plt.ylabel("reward")
+plt.savefig('./average_{0}/steps_rewards{0}.png'.format(int(avg)))
 plt.clf()
 
+plt.figure(figsize=(30,10))
+plt.plot(steps, probabilities)
+plt.grid(True)
+plt.xlabel("steps")
+plt.ylabel("probability neural network acts")
+plt.savefig('./average_{0}/steps_probability{0}.png'.format(int(avg)))
+plt.clf()
+
+plt.figure(figsize=(30,10))
+plt.plot(steps, losses)
+plt.grid(True)
+plt.xlabel("steps")
+plt.ylabel("losses")
+plt.savefig('./average_{0}/steps_loss{0}.png'.format(int(avg)))
+plt.clf()

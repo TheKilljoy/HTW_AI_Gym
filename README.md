@@ -66,3 +66,26 @@ As you can see this time the neural network did learn *something*. It peaked whe
 - expand the memories a little bit more (low priority, as it seems to work nevertheless)
 
 Just a clarification: A step is one action the neural network decides, not the number of frames that have passed.
+
+#### Many days later + 1
+24th of march. I realized a big mistake I did before. When I introduced frame skipping I also introduced a bug into my neural network: When the environment granted a reward for destroying a block the reward was immediately overwritten by zero points for the next frame if it wasn't the last frame in the sequence. Therefore the agent didn't get rewards for doing good. Luckily I just realized that while re-implementing the logic. I hopefully fixed that by accumulating the rewards per sequence and then clipping it to 1. Also I've implemented a punishment for doing nothing for a certain amount of steps at the start of a round. I haven't tested it so I hope I didn't do it wrong. I also changed the calculation of the probability for the agent to take actions. Now I am able to define a certain amount of steps after which the highest probability is reached.
+
+#### Many days later + 1
+25th of march. Results of the test:
+#### Breakout. The results averaged by the last 100 episodes:
+!["episodes_rewards100"](res/third_try/average_100/episodes_rewards100.png)
+!["steps_rewards100"](res/third_try/average_100/steps_rewards100.png)
+It is learning.. something. Unfortunately it seems to get stuck. But it's doing better than before. Also I've fixed some problems with the diagram that I had in the last pictures. Also I changed the script which reads the trainings log and draws the diagrams to take in arguments (filename and average). But Unfortunately I made a mistake with the "doing nothing" thing, because the "done" flag is obviously not set when losing a life. Therefore it did nothing. To get the information about the lifes I need to get it from the "info" dictionary the env.step(action) method gives back. I get the current lifes by calling info['ale.lives'].
+
+#### Many days later + 3
+27th of march. I've been testing a lot recently. I came to the conclusion that Breakout might be somewhat hard, so I started testing pong with my neural network, because it also has losses. I tried normalizing the input again, but the loss got so low, that the weights changed so slowly that I couldn't see any progress over the night. 
+#### Pong. The results averaged by the last 50 episodes:
+![episodes_rewards50](res/second_pong_with_normalized_input/average_50/episodes_rewards50.png)
+As you can see it didn't learn anything therefore I stopped that and turned it back to the not normalized input.
+#### Pong. The results averaged by the last 50 episodes:
+![episodes_rewards50](res/third_pong/average_50/episodes_rewards50.png)
+Result of letting the nn train pong for like... ~30 hours. Averaged by the last 50 episodes.
+As you can see it did learn something. But still it's incredibly time consuming and slow. I suspect the lack of memories, thats why I will start explicitly reading about how to implement the memory efficiently.
+
+#### Many das later + 4
+28th of march. I don't know why I didn't calculate the amount of RAM the memory takes earlier. One picture is a 84 x 84 uint8 matrix. 1 Million of those take 6.57gb of RAM. But as I those memories are a stack of 4 pictures it would take more than 26gb of RAM. Unfortunately that is a lot more than I have. So I looked again what other people did. Most of them didn't seem to bother, but some did. And I found [this](https://github.com/fg91/Deep-Q-Learning/blob/master/DQN.ipynb) and implemented the memory as shown. Unfortunately my network didn't learn anything after testing two different games (pong and breakout) for about 10 hours each. So I'm back at where I started. But today I got an Idea. I could try to concurrently compress the pictures with RLE. It's a quite simple algorithm, but it should work pretty well as most parts of the pictures are of the same color. I'll probably try to implement it over the weekend. For that I'll have to get familiar with concurrency in python. Doing that in sequence would probably slow too much down. Speaking of slowing down. I also looked into things that could slow my program down. Something that happens quite often is generating random numbers and I tested different methods of generating them. Namely random.random(), random.randrange(), np.random.randint() and np.random.rand(). I didn't test random.randint() because I already read that it is quite slow. The testcase was 1 million times 32 random numbers. Surprisingly the fastest method was random.random, even though I needed to multiply the result with a range and cast it into an int. E.q. int(random.random() * 1000000) would give an integer between 0 and 1 million - 1 (as the range of random.random is [0, 1)).
