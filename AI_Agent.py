@@ -14,16 +14,17 @@ from keras.layers import Conv2D, MaxPooling2D
 from collections import deque
 import matplotlib.pyplot as plt
 from pynput.keyboard import Key, Listener, KeyCode
+import multiprocessing
 
 MAX_STEPS = 5000000
 MAX_DOING_NOTHING = 30
 STACK_SIZE = 4
 BATCH_SIZE = 32
-MEMORY_SIZE = 200000 #goal 1.000.000, but currently 300.000 -> 10gb ram
-PRETRAIN_LENGTH = 1000
+MEMORY_SIZE = 10000000 #goal 1.000.000, but currently 300.000 -> 10gb ram
+PRETRAIN_LENGTH = 1000000
 GAMMA = 0.99
 RENDER_EPISODE = True
-LEARN_RATE = 0.0001
+LEARN_RATE = 0.00025
 NETWORK_UPDATE = 40000
 is_doing_nothing = True
 explore_start = 1.0
@@ -46,6 +47,14 @@ def on_release(key):
     if key == KeyCode.from_char('r'):
         RENDER_EPISODE = not RENDER_EPISODE
 
+def do_multicore_compressing(frames):
+    with multiprocessing.Pool() as pool:
+        pool.map(rle_compress, frames)
+
+def do_multicore_decompressing(compressed_frames):
+    with multiprocessing.Pool() as pool:
+        pool.map(rle_decompress, compressed_frames)
+
 class Memory():
     def __init__(self, max_size):
         #self.buffer = deque(maxlen = max_size)
@@ -56,26 +65,93 @@ class Memory():
         #self.buffer.append(experience) #(state0, action, reward, state1, done)
         if len(self.experience) >= self.size:
             self.experience.pop(0)
-        self.experience.append({'state0': state0,
+
+        #compress before storing in RAM
+        compressed_state0 = []
+        for i in range(4):
+            compressed_state0.append(rle_compress(state0[i]))
+        compressed_state1 = []
+        for i in range(4):
+            compressed_state1.append(rle_compress(state1[i]))
+
+        self.experience.append({'state0': compressed_state0,
                                 'action': action,
                                 'reward': reward,
-                                'state1': state1,
+                                'state1': compressed_state1,
                                 'done': done})
+
+        # self.experience.append({'state0': state0,
+        #                         'action': action,
+        #                         'reward': reward,
+        #                         'state1': state1,
+        #                         'done': done})
         if len(self.experience) % 100 == 0 and len(self.experience) != self.size:
             print("{0} of {1} samples accumulated".format(len(self.experience), self.size))
-
 
     def sample(self, batch_size):
         batch = []
         for i in range(batch_size):
             batch.append(self.experience[random.randrange(0, len(self.experience))])
-        return np.asarray(batch)
+
+        decompressed_batch = []
+        #decompressing data before giving it back
+        decompressed_state0 = []
+        decompressed_state1 = []
+        for i in range(batch_size):
+            for j in range(4):
+                decompressed_state0.append(rle_decompress(batch[i]['state0'][j]))
+                decompressed_state1.append(rle_decompress(batch[i]['state1'][j]))
+            decompressed_batch.append({'state0': np.asarray(decompressed_state0),
+                                       'action': batch[i]['action'],
+                                       'reward': batch[i]['reward'],
+                                       'state1': np.asarray(decompressed_state1),
+                                       'done': batch[i]['done']})
+            decompressed_state0 = []
+            decompressed_state1 = []
+
+        return decompressed_batch
 
     def length(self):
        return self.experience.__len__()
 
     def size_in_megabytes(self):
         return sys.getsizeof(self.experience) / 1024.0
+
+def rle_compress(frame):
+    compressed_frame = []
+    for y in range(84):
+        count = 0
+        current_number = 0
+        for x in range(84):
+            if x == 0:
+                current_number = frame[y][x]
+            if current_number == frame[y][x]:
+                count += 1
+            else:
+                compressed_frame.append(( np.uint8(current_number), np.uint8(count) ))
+                count = 1
+                current_number = frame[y][x]
+        compressed_frame.append(( np.uint8(current_number), np.uint8(count) ))
+    return np.asarray(compressed_frame)
+
+def rle_decompress(compressed_frame):
+    frame = np.array(np.zeros((84, 84), dtype=np.uint8))
+    y_index = 0
+    x_index = 0
+    count = 0
+    for i in range(len(compressed_frame)):
+        current_number = compressed_frame[i][0]
+        #print("for j in range {0}".format(compressed_frame[i][1]))
+        for j in range(compressed_frame[i][1]):
+            x_index = count + j
+            #print("frame[{0}][{1}]".format(y_index, x_index))
+            frame[y_index][x_index] = np.uint8(current_number)
+        count += compressed_frame[i][1]
+        if(x_index == 83):
+            y_index += 1
+            count = 0
+    return frame
+
 
 def preprocess_frame(frame):
     #preprocess image
@@ -234,6 +310,7 @@ while step <= MAX_STEPS:
     frameskip_reward_accumulated = 0
     action = predict_action(state0, possible_actions)
     state1, reward, done, info = env.step(action)
+    stacked_frames = stack_frames(stacked_frames, state1, False)
     lives = info['ale.lives']
     reward_per_episode += reward
     frameskip_reward_accumulated += reward
