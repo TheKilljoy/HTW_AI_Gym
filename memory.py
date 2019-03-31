@@ -3,6 +3,9 @@ import numpy as np
 import sys
 import os
 import multiprocessing as mp
+import threading
+from concurrent.futures import ThreadPoolExecutor
+import time
 
 def concurrent_rle_compression(memory_to_compress, memory_to_save, terminate):
     while terminate.qsize() == 0:
@@ -37,11 +40,14 @@ def rle_compress(frame):
         compressed_frame.append(( np.uint8(current_number), np.uint8(count) ))
     return np.asarray(compressed_frame)
 
-def concurrent_rle_decompression(memory_to_decompress, memory_to_load, terminate):
+def concurrent_rle_decompression(memory_to_decompress, memory_to_load, terminate, batch_size):
+    memory_batch = []
     while terminate.qsize() == 0:
+        #print("size of memory_to_decompress ",memory_to_decompress.qsize())
         memory = memory_to_decompress.get()
         state0 = memory['state0']
         state1 = memory['state1']
+
         decompressed_state0 = []
         for i in range(4):
             decompressed_state0.append(rle_decompress(state0[i]))
@@ -50,9 +56,13 @@ def concurrent_rle_decompression(memory_to_decompress, memory_to_load, terminate
         for i in range(4):
             decompressed_state1.append(rle_decompress(state1[i]))
 
-        memory['state0'] = decompressed_state0
-        memory['state1'] = decompressed_state1
-        memory_to_load.put(memory)
+        memory['state0'] = np.asarray(decompressed_state0)
+        memory['state1'] = np.asarray(decompressed_state1)
+
+        memory_batch.append(memory)
+        if len(memory_batch) >= batch_size:
+            memory_to_load.put(np.asarray(memory_batch))
+            memory_batch.clear()
 
 def rle_decompress(compressed_frame):
     frame = np.array(np.zeros((84, 84), dtype=np.uint8))
@@ -70,12 +80,33 @@ def rle_decompress(compressed_frame):
             count = 0
     return frame
 
+# def buffer_memory_batch(memory_to_load, memory_buffer, terminate, batch_size):
+#     memory_batch = []
+#     while terminate.qsize() == 0:
+#         if memory_buffer.qsize() <= 10:
+#             memory_batch.append(memory_to_load.get())
+#             #print("memory buffer size {0} memory batch size {1}".format(memory_buffer.qsize(), len(memory_batch)))
+#             if len(memory_batch) >= batch_size:
+#                 memory_buffer.put(np.asarray(memory_batch))
+#                 memory_batch.clear()
+
+# def threaded_adding_memory_to_decompress_for_buffering(memory_to_decompress, experience, batch_size):
+#     print("thread started")
+#     while True:
+#         time.sleep(0.01)
+#         if len(experience) > batch_size and memory_to_decompress.qsize() <= 10 * batch_size:
+#             print("put memory to decompress")
+#             for i in range(batch_size * 5):
+#                 print(memory_to_decompress.qsize())
+#                 memory_to_decompress.put(experience[random.randrange(0, len(experience))])
+
 class Memory:
-    def __init__(self, max_size, is_multiprocessing=True):
+    def __init__(self, max_size, batch_size, is_multiprocessing=True):
         #self.buffer = deque(maxlen = max_size)
         self.size = max_size
         self.experience = []
         self.is_multiprocessing = is_multiprocessing
+        self.batch_size = batch_size
 
         if is_multiprocessing:
             self.first = True
@@ -83,24 +114,28 @@ class Memory:
             self.memory_to_save = mp.Queue()
             self.memory_to_load = mp.Queue()
             self.memory_to_decompress = mp.Queue()
+            self.memory_buffer = mp.Queue()
             self.terminate = mp.Queue()
 
-            self.number_of_processes_for_compressing = int(mp.cpu_count() / 2)
-            self.number_of_processes_for_decompressing = mp.cpu_count() - self.number_of_processes_for_compressing
+            self.number_of_processes_for_compressing = 2#int(mp.cpu_count() / 2) - 1
+            self.number_of_processes_for_decompressing = 8#mp.cpu_count() - self.number_of_processes_for_compressing - 1
 
             self.processes_compressing = []
             self.processes_decompressing = []
-            self.process_save_to_memory = mp.Process()
-
+            #self.process_save_to_memory = mp.Process(target=buffer_memory_batch, args=(self.memory_to_load, self.memory_buffer, self.terminate, self.batch_size))
+            #self.process_save_to_memory.start()
             for i in range(self.number_of_processes_for_compressing):
                 p = mp.Process(target=concurrent_rle_compression, args=(self.memory_to_compress, self.memory_to_save, self.terminate))
                 self.processes_compressing.append(p)
                 p.start()
             
             for i in range(self.number_of_processes_for_decompressing):
-                p = mp.Process(target=concurrent_rle_decompression, args=(self.memory_to_decompress, self.memory_to_load, self.terminate))
+                p = mp.Process(target=concurrent_rle_decompression, args=(self.memory_to_decompress, self.memory_to_load, self.terminate, self.batch_size))
                 self.processes_decompressing.append(p)
                 p.start()
+            
+            #self.thread_buffer_filler = threading.Thread(target=threaded_adding_memory_to_decompress_for_buffering, args=(self.memory_to_decompress, self.experience, self.batch_size))
+            #self.thread_buffer_filler.start()
 
     def __del__(self):
         self.terminate.put(True)
@@ -108,6 +143,7 @@ class Memory:
             p.terminate()
         for p in self.processes_decompressing:
             p.terminate()
+        #self.process_save_to_memory.terminate()
 
     def add_with_compression(self, memory):
         self.memory_to_compress.put(memory)
@@ -116,9 +152,6 @@ class Memory:
         for num_of_memory in range(self.memory_to_save.qsize()):
             memory = self.memory_to_save.get()
             self.add(memory[0], memory[1], memory[2], memory[3], memory[4])
-
-    def sample_with_decompression(self, batch_size):
-        return
 
     def add(self, state0, action, reward, state1, done):
         #self.buffer.append(experience) #(state0, action, reward, state1, done)
@@ -133,25 +166,33 @@ class Memory:
 
         if len(self.experience) % 100 == 0 and len(self.experience) != self.size:
             print("{0} of {1} samples accumulated".format(len(self.experience), self.size))
+            print("memory_to_decompress {0}".format(self.memory_to_decompress.qsize()))
 
-    def sample(self, batch_size):   
+        num = self.number_of_processes_for_decompressing
+        if self.memory_to_load.qsize() < 10 * num and len(self.experience) > 10 * self.batch_size * num and self.memory_to_decompress.qsize() < 10_000:
+            for i in range(self.batch_size * (10 - self.memory_to_load.qsize() * num)):
+                self.memory_to_decompress.put(self.experience[random.randrange(0, len(self.experience))])
+
+    def sample(self, batch_size):
         if not self.is_multiprocessing:
             batch = []
             for i in range(batch_size):
                 batch.append(self.experience[random.randrange(0, len(self.experience))])
             return np.asarray(batch)
         else:
-            if self.first:
-                self.first = False
-                for i in range(batch_size):
-                    self.memory_to_decompress.put(self.experience[random.randrange(0, len(self.experience))])
-
-            for i in range(batch_size):
-                self.memory_to_decompress.put(self.experience[random.randrange(0, len(self.experience))])
-            decompressed_batch = []
-            for i in range(batch_size):
-                decompressed_batch.append(self.memory_to_load.get())
-            return np.asarray(decompressed_batch)
+            # #initialize with a little bit more batches to have a buffer
+            # if self.first:
+            #     self.first = False
+            #     for i in range(batch_size * 100):
+            #         self.memory_to_decompress.put(self.experience[random.randrange(0, len(self.experience))])
+            # #put the the next batches into memory, so it can be decompressed
+            # for i in range(batch_size):
+            #     self.memory_to_decompress.put(self.experience[random.randrange(0, len(self.experience))])
+            # #get an already decompressed batch
+            #print("memory buffer count {0}".format(self.memory_buffer.qsize()))
+            #return self.memory_buffer.get()
+            print("getting memory from buffer {0}".format(self.memory_to_load.qsize()))
+            return self.memory_to_load.get()
 
     def length(self):
        return self.experience.__len__()

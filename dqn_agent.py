@@ -16,6 +16,9 @@ class DqnAgent:
         self.is_training = is_training
         self.is_pretrain = True
         self.PRETRAIN_LENGTH = PRETRAIN_LENGTH
+        if self.PRETRAIN_LENGTH < 100 * BATCH_SIZE:
+            self.PRETRAIN_LENGTH = 100 * BATCH_SIZE
+            print("PRETRAIN_LENGTH ",self.PRETRAIN_LENGTH)
         self.MAX_DOING_NOTHING = MAX_DOING_NOTHING
         self.FRAME_SIZE = FRAME_SIZE
         self.NETWORK_UPDATE = NETWORK_UPDATE
@@ -37,7 +40,7 @@ class DqnAgent:
         self.model = dqn_network.DqnNetwork(input_shape, self.action_space)
         self.target_model = dqn_network.DqnNetwork(input_shape, self.action_space)
         self.target_model.set_weights(self.target_model)
-        self.memory = memory.Memory(max_size=MEMORY_SIZE, is_multiprocessing=self.is_compressing)
+        self.memory = memory.Memory(max_size=MEMORY_SIZE, is_multiprocessing=self.is_compressing, batch_size=self.BATCH_SIZE)
 
     def __init_new_round(self):
         self.state0 = self.env.reset()

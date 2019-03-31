@@ -41,7 +41,7 @@ else:
                 args.env, args.memory, args.steps,
                 args.pretrain, args.framestacksize,
                 args.start, args.end, args.explore,
-                args.gamma, args.batch, args.play, args.render))
+                args.gamma, args.batch, not args.play, args.render))
 
 atari_agent = dqn_agent.DqnAgent(input_shape=(args.framestacksize, 84, 84), env=env, MAX_STEPS=args.steps,
                                  MAX_DOING_NOTHING=args.nothing, FRAME_SIZE=args.framestacksize,
