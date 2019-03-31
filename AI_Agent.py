@@ -14,14 +14,14 @@ from keras.layers import Conv2D, MaxPooling2D
 from collections import deque
 import matplotlib.pyplot as plt
 from pynput.keyboard import Key, Listener, KeyCode
-import multiprocessing
+from multiprocessing import Process, Queue, Lock, Pool
 
 MAX_STEPS = 5000000
 MAX_DOING_NOTHING = 30
 STACK_SIZE = 4
 BATCH_SIZE = 32
-MEMORY_SIZE = 10000000 #goal 1.000.000, but currently 300.000 -> 10gb ram
-PRETRAIN_LENGTH = 1000000
+MEMORY_SIZE = 300000 #goal 1.000.000, but currently 300.000 -> 10gb ram
+PRETRAIN_LENGTH = 50000
 GAMMA = 0.99
 RENDER_EPISODE = True
 LEARN_RATE = 0.00025
@@ -37,7 +37,7 @@ neural_network_active = 0
 neural_network_total = 0
 reward_per_episode = 0
 
-env = gym.make('Breakout-v0')
+env = gym.make('Pong-v0')
 state_shape = (4, 84, 84)
 possible_actions = np.array(np.identity(env.action_space.n, dtype=np.uint8).tolist())
 stacked_frames = np.zeros(state_shape, dtype=np.uint8)
@@ -48,12 +48,12 @@ def on_release(key):
         RENDER_EPISODE = not RENDER_EPISODE
 
 def do_multicore_compressing(frames):
-    with multiprocessing.Pool() as pool:
-        pool.map(rle_compress, frames)
+    with Pool(16) as pool:
+        return pool.map(rle_compress, frames)
 
 def do_multicore_decompressing(compressed_frames):
-    with multiprocessing.Pool() as pool:
-        pool.map(rle_decompress, compressed_frames)
+    with Pool(4) as pool:
+        return pool.map(rle_decompress, compressed_frames)
 
 class Memory():
     def __init__(self, max_size):
@@ -62,54 +62,22 @@ class Memory():
         self.experience = []
 
     def add(self, state0, action, reward, state1, done):
-        #self.buffer.append(experience) #(state0, action, reward, state1, done)
         if len(self.experience) >= self.size:
             self.experience.pop(0)
 
-        #compress before storing in RAM
-        compressed_state0 = []
-        for i in range(4):
-            compressed_state0.append(rle_compress(state0[i]))
-        compressed_state1 = []
-        for i in range(4):
-            compressed_state1.append(rle_compress(state1[i]))
-
-        self.experience.append({'state0': compressed_state0,
+        self.experience.append({'state0': state0,
                                 'action': action,
                                 'reward': reward,
-                                'state1': compressed_state1,
+                                'state1': state1,
                                 'done': done})
-
-        # self.experience.append({'state0': state0,
-        #                         'action': action,
-        #                         'reward': reward,
-        #                         'state1': state1,
-        #                         'done': done})
         if len(self.experience) % 100 == 0 and len(self.experience) != self.size:
             print("{0} of {1} samples accumulated".format(len(self.experience), self.size))
 
     def sample(self, batch_size):
         batch = []
         for i in range(batch_size):
-            batch.append(self.experience[random.randrange(0, len(self.experience))])
-
-        decompressed_batch = []
-        #decompressing data before giving it back
-        decompressed_state0 = []
-        decompressed_state1 = []
-        for i in range(batch_size):
-            for j in range(4):
-                decompressed_state0.append(rle_decompress(batch[i]['state0'][j]))
-                decompressed_state1.append(rle_decompress(batch[i]['state1'][j]))
-            decompressed_batch.append({'state0': np.asarray(decompressed_state0),
-                                       'action': batch[i]['action'],
-                                       'reward': batch[i]['reward'],
-                                       'state1': np.asarray(decompressed_state1),
-                                       'done': batch[i]['done']})
-            decompressed_state0 = []
-            decompressed_state1 = []
-
-        return decompressed_batch
+            batch.append(self.experience[int(random.random() * len(self.experience)) ])
+        return np.asarray(batch)
 
     def length(self):
        return self.experience.__len__()
@@ -193,13 +161,13 @@ def train():
     loss = 0
         
     for dataset in batch:
-        inputs.append(dataset['state0'].astype('float64'))
-        training_state1 = np.expand_dims(dataset['state1'].astype('float64'), axis=0)
+        inputs.append(dataset['state0'].astype('float32'))
+        training_state1 = np.expand_dims(dataset['state1'].astype('float32'), axis=0)
 
         training_state1_prediction = target_model.predict(training_state1)
         q_max = np.max(training_state1_prediction)
 
-        t = list(model.predict(np.expand_dims(dataset['state0'].astype('float64'), axis=0))[0])
+        t = list(model.predict(np.expand_dims(dataset['state0'].astype('float32'), axis=0))[0])
         if dataset['done']:
             t[dataset['action']] = dataset['reward']
         else:
@@ -283,7 +251,7 @@ while memory.length() <= PRETRAIN_LENGTH:
     if frameskip_reward_accumulated < -1.0:
         frameskip_reward_accumulated = -1
 
-    memory.add(state0, action, reward, state1, done)
+    memory.add(state0, action, frameskip_reward_accumulated, state1, done)
     state0 = state1 #as state1 is now the current state it becomes state0
     if done:
         reward_per_episode = 0
@@ -348,7 +316,7 @@ while step <= MAX_STEPS:
     #frame where the agent gets a reward could be skipped, therefore clip the total reward to max 1
     if frameskip_reward_accumulated > 0:
         frameskip_reward_accumulated = 1.0
-    if frameskip_reward_accumulated < -1.0:
+    if frameskip_reward_accumulated < 0:
         frameskip_reward_accumulated = -1
         
     memory.add(state0, action, frameskip_reward_accumulated, state1, done)
