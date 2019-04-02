@@ -6,19 +6,25 @@ import random
 import numpy as np
 
 class DqnAgent:
+    """
+    This class represents an DQN Agent, that is initialized with
+    the user defined parameters or with standard parameters.
+    """
     def __init__(self, input_shape, env, MAX_STEPS, MAX_DOING_NOTHING, 
                  FRAME_SIZE, BATCH_SIZE, MEMORY_SIZE, PRETRAIN_LENGTH,
                  NETWORK_UPDATE, EXPLORE_START, EXPLORE_END, EXPLORE_STEPS,
-                 GAMMA, is_training, is_rendering, is_compressing=True):
+                 GAMMA, is_training, is_rendering, path_to_weights, is_compressing=False):
+                 #WARNING! IT IS NOT RECOMMENDED TO USE COMPRESSION, AS IT IS REALLY SLOW
         
+        self.BATCH_SIZE = BATCH_SIZE
+        self.is_compressing = is_compressing
+        #initialize memory asap, because new processes get an instance of the current state, therefore take a lot of memory
+        self.memory = memory.Memory(max_size=MEMORY_SIZE, is_multiprocessing=self.is_compressing, batch_size=self.BATCH_SIZE)
         self.action_space = np.array(np.identity(env.action_space.n, dtype=np.uint8).tolist())
         self.env = env
         self.is_training = is_training
         self.is_pretrain = True
         self.PRETRAIN_LENGTH = PRETRAIN_LENGTH
-        if self.PRETRAIN_LENGTH < 100 * BATCH_SIZE:
-            self.PRETRAIN_LENGTH = 100 * BATCH_SIZE
-            print("PRETRAIN_LENGTH ",self.PRETRAIN_LENGTH)
         self.MAX_DOING_NOTHING = MAX_DOING_NOTHING
         self.FRAME_SIZE = FRAME_SIZE
         self.NETWORK_UPDATE = NETWORK_UPDATE
@@ -28,46 +34,54 @@ class DqnAgent:
         self.EXPLORE_STEPS = EXPLORE_STEPS
         self.epsilon = EXPLORE_START
         self.GAMMA = GAMMA
-        self.BATCH_SIZE = BATCH_SIZE
         self.is_rendering = is_rendering
-        self.is_compressing = is_compressing
-
+        
         self.decay_rate = (EXPLORE_START - EXPLORE_END)/EXPLORE_STEPS
         self.doing_nothing_counter = 0
         self.is_doing_nothing = True
         self.stacked_frames = np.array(np.zeros(input_shape), dtype=np.uint8)
 
         self.model = dqn_network.DqnNetwork(input_shape, self.action_space)
+        if path_to_weights != "NONE":
+            self.model.load_weights(path_to_weights)
+            print("Successfully loaded weights")
         self.target_model = dqn_network.DqnNetwork(input_shape, self.action_space)
-        self.target_model.set_weights(self.target_model)
-        self.memory = memory.Memory(max_size=MEMORY_SIZE, is_multiprocessing=self.is_compressing, batch_size=self.BATCH_SIZE)
+        self.target_model.set_weights(self.model)
 
     def __init_new_round(self):
-        self.state0 = self.env.reset()
-        self.stacked_frames = util.stack_frames(self.stacked_frames, self.state0, True)
+        """
+        Initialize a new round.
+        Returns the initial state
+        """
+        state0 = self.env.reset()
+        self.stacked_frames = util.stack_frames(self.stacked_frames, state0, True, self.FRAME_SIZE)
         return self.stacked_frames
     
     def __do_one_round(self, state0):
+        """
+        Do one step in the environment depending on the given state0.
+        Automatically adds experience to the memory.
+        Returns the state after successfully playing.
+        """
         frameskip_reward_accumulated = 0
         action = self.__predict_action(state0)
         state1, reward, done, info = self.env.step(action)
+        self.stacked_frames = util.stack_frames(self.stacked_frames, state1, False, self.FRAME_SIZE)
         if self.is_rendering:
             self.env.render()
         lifes = info['ale.lives']
         frameskip_reward_accumulated += reward
-        self.stacked_frames = util.stack_frames(self.stacked_frames, state1, False)
         #in state0 perform action, get reward and be in state1 where the game might be done
         for j in range(3):
             state1, reward, done, info = self.env.step(action)
             if self.is_rendering:
                 self.env.render()
             frameskip_reward_accumulated += reward
-            self.stacked_frames = util.stack_frames(self.stacked_frames, state1, False)
+            self.stacked_frames = util.stack_frames(self.stacked_frames, state1, False, self.FRAME_SIZE)
             if done:
                 break
 
         state1 = self.stacked_frames
-
         if info['ale.lives'] < lifes:
             lifes = info['ale.lives']
             frameskip_reward_accumulated += -1.0
@@ -91,19 +105,30 @@ class DqnAgent:
                 self.memory.put_compressed_memory_into_memories()
             else:
                 self.memory.add(state0, action, reward, state1, done)
-        return state0, frameskip_reward_accumulated, done, info
+        return state1, frameskip_reward_accumulated, done, info
 
     def __update_epsilon(self):
+        """
+        Updates the epsilon value
+        """
         self.epsilon -= self.decay_rate
         if self.epsilon < self.EXPLORE_END:
             self.epsilon = self.EXPLORE_END
 
     def __update_network(self, step):
+        """
+        Updates the target model (the one, that makes the decisions while training)
+        with the weights of the model that is trained.
+        """
         if step != 0 and step % self.NETWORK_UPDATE == 0:
             print("Updated target network")
             self.target_model.set_weights(self.model)
     
     def __cut_reward(self, reward):
+        """
+        Cuts the reward if it is above 1.0 or below -1.0
+        to 1.0 or -1.0 respectively
+        """
         if reward > 0.0:
             return 1.0
         if reward < 0.0:
@@ -111,12 +136,25 @@ class DqnAgent:
         return 0.0
 
     def __predict_action(self, state):
-        if random.random() < self.epsilon or not self.is_training or self.is_pretrain:
+        """
+        Predicts an action for the agent for the given state.
+        Depending on the current epsilon value the action can
+        be chosen randomly or Q-greedy
+        """
+
+        #if the agent is playing always let the NN decide
+        if not self.is_training:
+            state_input_form = np.expand_dims(state.astype('float32'), axis=0)
+            choices = self.model.predict(state_input_form)
+            choice = np.argmax(choices)
+            action = self.action_space[choice]
+            return np.argmax(action)            
+
+        if random.random() < self.epsilon:
             choice = int(random.random() * len(self.action_space))
             action = self.action_space[choice]
         else:
             #normalize and expand dims, so that it is a batch of size 1
-            print("NN taking action")
             state_input_form = np.expand_dims(state.astype('float32'), axis=0)
             choices = self.model.predict(state_input_form)
             choice = np.argmax(choices)
@@ -124,6 +162,10 @@ class DqnAgent:
         return np.argmax(action)
 
     def __pretrain(self):
+        """
+        Starts the pre-training session to fill up the memories
+        of the agent.
+        """
         for i in range(self.PRETRAIN_LENGTH):
             while self.memory.length() <= self.PRETRAIN_LENGTH:
                 if self.memory.length() == 0:
@@ -134,7 +176,11 @@ class DqnAgent:
                     state0 = self.__init_new_round()
 
     def __train(self):
-        # print("Training with mini batch")
+        """
+        This private method trains the NN with a batch
+        It returns a the "history" object a keras NN
+        returns when training it with the "fit" method
+        """
         batch = self.memory.sample(self.BATCH_SIZE)
         inputs = []
         targets = []
@@ -159,15 +205,22 @@ class DqnAgent:
         return self.model.fit(inputs, targets, batch_size=self.BATCH_SIZE)
 
     def train(self):
+        """
+        Start a new training session with the agent.
+        Every 10 Episodes the current weights will be saved
+        under the name "EnvName-vx_weights.h5".
+        Every 10 Episodes the logfile will be updated.
+        The logfile is called "EnvName-vx_log.txt"
+        """
         self.__pretrain()
         self.is_doing_nothing = True
         self.doing_nothing_counter = 0
         reward_per_episode = 0
         episode = 0
-        f = open("log.txt", "a+")
-        state0 = self.__init_new_round()
+        f = open("{0}_log.txt".format(self.env.unwrapped.spec.id), "a+")
+        state = self.__init_new_round()
         for steps in range(self.MAX_STEPS):
-            state0, reward, done, info = self.__do_one_round(state0)
+            state, reward, done, info = self.__do_one_round(state)
             reward_per_episode += reward
             
             history = self.__train()
@@ -177,7 +230,8 @@ class DqnAgent:
 
             if((episode + 1) % 10 == 0):
                 f.close()
-                f = open("log.txt", "a+")
+                f = open("{0}_log.txt".format(self.env.unwrapped.spec.id), "a+")
+                self.model.write_weights("{0}_weights.h5".format(self.env.unwrapped.spec.id))
 
             if done:
                 print("episode {0} reward {1}".format(episode, reward_per_episode))
@@ -186,21 +240,23 @@ class DqnAgent:
                 reward_per_episode = 0
                 state0 = self.__init_new_round()
                 
-
     def play(self):
-        print("playing")
+        """
+        Let the agent play with pretrained weights.
+        The Weights have to have the name "GameName-vx_weights.h5"
+        """
         self.is_training = False
         self.is_rendering = True
-        self.target_model.load_weights("my_model_weights.h5")
+        self.model.load_weights("{0}_weights.h5".format(self.env.unwrapped.spec.id))
         episode = 0
         reward_per_episode = 0
-        state0 = self.__init_new_round()
+        state = self.__init_new_round()
         while episode < 100:
-            state0, reward, done, info = self.__do_one_round(state0)
+            state, reward, done, info = self.__do_one_round(state)
             reward_per_episode += reward
             if done:
                 print("episode:{0} reward:{1}".format(episode, reward_per_episode))
                 reward_per_episode = 0
-                state0 = self.__init_new_round()
+                state = self.__init_new_round()
                 episode += 1
 
