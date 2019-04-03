@@ -59,7 +59,9 @@ Each game will start with an empty table that will be filled through many action
 ... <br>
 ... <br>
 ... <br>
+
 Fast forward an table might look like that:
+
 | States        | Do Nothing      | Move Right      | Move Left       |
 | ------------- |:---------------:|:---------------:|:---------------:|
 | State1        | 0               | 1               | -1              |
