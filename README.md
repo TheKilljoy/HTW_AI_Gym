@@ -6,8 +6,38 @@ This is a project for a AI course at the HTW Berlin. I'm trying to implement an 
 3. [The Journey](#the-journey)
 
 ## Introduction to the Project
+#### Prerequisites
+You need a linux machine, where Open AI Gym with the Atari package is installed.
+You will also need Keras and Tensorflow-GPU installed, to be able to let your
+Neural Network train on your graphics card. You could also use your CPU if your graphics card isn't powerful enough.
+### How to use
+Examples of typical usage:
+```
+python3 dqn_atari.py -h
+```
+will open a help menu with a description of all commands
 
+```
+python3 dqn_atari.py -r
+```
+This will start your agent train on Pong-v0 and save a log "Pong-v0_log.txt" and the weights "Pong-v0_weights.h5" every 10 episodes.
+The -r command will enable rendering, so you can see what is happening.
+
+```
+python3 dqn_atari.py -env Breakout-v0 --continue Breakout-v0_weights.h5 --start 0.1 --end 0.0 -pre 300000
+```
+this command will load a session of Breakout-v0 with previously trained weights, do 300.000 (standard maximum of memories) pretrained memories, where the agent fully decides on the action taken and after that start at epsilon 0.1 and move down to epsilon 0.0 (probability of a random action) in 1.000.000 steps (standard configuration)
+
+A list of available games can be found [here.](https://gym.openai.com/envs/#atari)
+
+To generate some graphs there is a script "reward_visualizer.py". It takes 2 arguments -f [filepath] -a [number]
+##### Example:
+```
+python3 reward_visualizer.py -f Pong-v0_log.txt -a 50
+```
+This will create a graphs for the Pong-v0_log.txt file with an average of the last 50 episodes.
 ## Explaining the Theory
+
 
 ## The Journey
 

@@ -4,6 +4,7 @@ import sys
 import os
 import multiprocessing as mp
 import time
+import cv2
 
 
 ###############################################################################
@@ -186,7 +187,7 @@ class Memory:
         if not self.is_multiprocessing:
             batch = []
             for i in range(batch_size):
-                batch.append(self.experience[random.randrange(0, len(self.experience))])
+                batch.append(self.experience[int(random.random() * len(self.experience))])
             return np.asarray(batch)
         else:
             #if the process is too slow to decompress the memories, the queue would be overloaded with memories

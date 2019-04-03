@@ -41,10 +41,13 @@ class DqnAgent:
         self.is_doing_nothing = True
         self.stacked_frames = np.array(np.zeros(input_shape), dtype=np.uint8)
 
+        self.is_continue = False
+
         self.model = dqn_network.DqnNetwork(input_shape, self.action_space)
         if path_to_weights != "NONE":
             self.model.load_weights(path_to_weights)
             print("Successfully loaded weights")
+            self.is_continue = True
         self.target_model = dqn_network.DqnNetwork(input_shape, self.action_space)
         self.target_model.set_weights(self.model)
 
@@ -66,22 +69,23 @@ class DqnAgent:
         frameskip_reward_accumulated = 0
         action = self.__predict_action(state0)
         state1, reward, done, info = self.env.step(action)
+        frameskip_reward_accumulated += reward
         self.stacked_frames = util.stack_frames(self.stacked_frames, state1, False, self.FRAME_SIZE)
         if self.is_rendering:
             self.env.render()
         lifes = info['ale.lives']
-        frameskip_reward_accumulated += reward
         #in state0 perform action, get reward and be in state1 where the game might be done
         for j in range(3):
             state1, reward, done, info = self.env.step(action)
-            if self.is_rendering:
-                self.env.render()
             frameskip_reward_accumulated += reward
             self.stacked_frames = util.stack_frames(self.stacked_frames, state1, False, self.FRAME_SIZE)
+            if self.is_rendering:
+                self.env.render()
             if done:
                 break
 
         state1 = self.stacked_frames
+        #if a life is lost
         if info['ale.lives'] < lifes:
             lifes = info['ale.lives']
             frameskip_reward_accumulated += -1.0
@@ -93,6 +97,8 @@ class DqnAgent:
         if self.is_doing_nothing and action == 0:
             self.doing_nothing_counter += 1
         if self.doing_nothing_counter > self.MAX_DOING_NOTHING:
+            #if the agent is doing nothing for too long punish him
+            #and restart the round
             print ("Neural network got punished for doing nothing")
             frameskip_reward_accumulated = -1.0
             done = True
@@ -100,11 +106,13 @@ class DqnAgent:
         frameskip_reward_accumulated = self.__cut_reward(frameskip_reward_accumulated)
 
         if self.is_training:
+            ##### as compression is not used this part is irrelevant
             if self.is_compressing:
-                self.memory.add_with_compression((state0, action, reward, state1, done))
+                self.memory.add_with_compression((state0, action, frameskip_reward_accumulated, state1, done))
                 self.memory.put_compressed_memory_into_memories()
+            ############################################################
             else:
-                self.memory.add(state0, action, reward, state1, done)
+                self.memory.add(state0, action, frameskip_reward_accumulated, state1, done)
         return state1, frameskip_reward_accumulated, done, info
 
     def __update_epsilon(self):
@@ -143,7 +151,7 @@ class DqnAgent:
         """
 
         #if the agent is playing always let the NN decide
-        if not self.is_training:
+        if not self.is_training or self.is_continue:
             state_input_form = np.expand_dims(state.astype('float32'), axis=0)
             choices = self.model.predict(state_input_form)
             choice = np.argmax(choices)
@@ -169,11 +177,13 @@ class DqnAgent:
         for i in range(self.PRETRAIN_LENGTH):
             while self.memory.length() <= self.PRETRAIN_LENGTH:
                 if self.memory.length() == 0:
-                    state0 = self.__init_new_round()
-                state0, reward, done, info = self.__do_one_round(state0)
+                    state = self.__init_new_round()
+                state, reward, done, info = self.__do_one_round(state)
 
                 if done:
-                    state0 = self.__init_new_round()
+                    state = self.__init_new_round()
+                    self.doing_nothing_counter = 0
+                    self.is_doing_nothing = True
 
     def __train(self):
         """
@@ -187,13 +197,13 @@ class DqnAgent:
         loss = 0
 
         for dataset in batch:
-            inputs.append(dataset['state0'].astype('float32'))
-            training_state1 = np.expand_dims(dataset['state1'].astype('float32'), axis=0)
+            inputs.append(dataset['state0'].astype('float64'))
 
+            training_state1 = np.expand_dims(dataset['state1'].astype('float64'), axis=0)
             training_state1_prediction = self.target_model.predict(training_state1)
             q_max = np.max(training_state1_prediction)
 
-            t = list(self.model.predict(np.expand_dims(dataset['state0'].astype('float32'), axis=0))[0])
+            t = list(self.model.predict(np.expand_dims(dataset['state0'].astype('float64'), axis=0))[0])
             if dataset['done']:
                 t[dataset['action']] = dataset['reward']
             else:
@@ -213,6 +223,7 @@ class DqnAgent:
         The logfile is called "EnvName-vx_log.txt"
         """
         self.__pretrain()
+        self.is_continue = False
         self.is_doing_nothing = True
         self.doing_nothing_counter = 0
         reward_per_episode = 0
@@ -238,7 +249,9 @@ class DqnAgent:
                 f.write("Episode: {0} Reward: {1} Steps: {2} Current Epsilon: {3} Loss: {4} Acc: {5}\n".format(episode, reward_per_episode, steps, self.epsilon, history['loss'][0], history['acc'][0]))
                 episode += 1
                 reward_per_episode = 0
-                state0 = self.__init_new_round()
+                self.doing_nothing_counter = 0
+                self.is_doing_nothing = True
+                state = self.__init_new_round()
                 
     def play(self):
         """
@@ -259,4 +272,5 @@ class DqnAgent:
                 reward_per_episode = 0
                 state = self.__init_new_round()
                 episode += 1
+        self.model.write_weights("{0}_weights.h5".format(self.env.unwrapped.spec.id))
 
