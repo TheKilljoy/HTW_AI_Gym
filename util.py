@@ -1,6 +1,10 @@
 import cv2
 import numpy as np
 
+#preprocess_frame and stack_frames
+#are inspired by 
+#https://github.com/simoninithomas/Deep_reinforcement_learning_Course/blob/master/Deep%20Q%20Learning/Space%20Invaders/DQN%20Atari%20Space%20Invaders.ipynb
+
 def preprocess_frame(frame):
     """
     Turn the frame into gray,
