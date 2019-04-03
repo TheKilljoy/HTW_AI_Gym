@@ -162,7 +162,7 @@ class DqnAgent:
             choice = int(random.random() * len(self.action_space))
             action = self.action_space[choice]
         else:
-            #normalize and expand dims, so that it is a batch of size 1
+            #expand dims, so that it is a batch of size 1 (has the form 1 x 4 x 84 x 84)
             state_input_form = np.expand_dims(state.astype('float32'), axis=0)
             choices = self.model.predict(state_input_form)
             choice = np.argmax(choices)
