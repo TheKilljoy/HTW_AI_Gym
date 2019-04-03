@@ -37,19 +37,126 @@ python3 reward_visualizer.py -f Pong-v0_log.txt -a 50
 ```
 This will create a graphs for the Pong-v0_log.txt file with an average of the last 50 episodes.
 ## Explaining the Theory
+### The Idea
+My intention was to build a neural network that can play a game on an emulator. I got inspired by videos like [MarI/O](https://www.youtube.com/watch?v=qv6UVOQ0F44) and [Computer program that learns to play classic NES games.](https://www.youtube.com/watch?v=xOCurBYI_gY) At first I wanted to go with an evolutionoary neural network. While researching I came across something called "Deep Q Learning" and it was just what I was looking for. So that is what I will be explaining here: How does a computer learn to play games with just the raw pixels as input using DQN (Deep Q Learning).
 
+### Q Learning
+Q Learning (Q stands for quality) is a technique the mathematician [Andrey Markov](https://en.wikipedia.org/wiki/Andrey_Markov) invented. I won't go much into the math.
+
+The Idea is simple: The game is in a state, the computer (the agent) will take an action and will get a reward for this action in that state. The result will be a new state.
+
+!["Learning"](res/pictures/QLearning01.png)
+
+The reward will tell the agent, if the decision was a good or a bad one. Now the agent has a new state to interact with. Over time the agent in which state to do an action, that will have a good reward. But you're not satisfied with a good reward, you want the best possible reward you can get in this specific state.
+To achieve that there is something called a "Q Table". All possible states are the rows and the colums are the possible actions.
+Each game will start with an empty table that will be filled through many actions, rewards and new states.
+
+| States        | Do Nothing      | Move Right      | Move Left       |
+| ------------- |:---------------:|:---------------:|:---------------:|
+| State1        | 0               | 0               | 0               |
+| State2        | 0               | 0               | 0               |
+| State3        | 0               | 0               | 0               |
+... <br>
+... <br>
+... <br>
+Fast forward an table might look like that:
+| States        | Do Nothing      | Move Right      | Move Left       |
+| ------------- |:---------------:|:---------------:|:---------------:|
+| State1        | 0               | 1               | -1              |
+| State2        | -1              | 0.5             | 1               |
+| State3        | 1               | 0.5             | -1              |
+... <br>
+... <br>
+... <br>
+
+Imagine you have a top down space game, where you have to maneuver your spaceship left and right to evade enemies. In the initial state doing nothing won't start the game, so it will not get a reward. Moving right will let you pick up an powerup and evade an enemy, while moving left will crush you right into an enemy. You are now in the State2, where an enemy is right in front of you. If you do nothing you will lose the game, if you move right you will evade, if you move left you will get a powerup and evade the enemy. To achieve a table like that, where each state has an optimal action you will need to update the Q table for each state for a given action and the resulting reward. First all actions have to be random, so the agent can explore the different actions for each state. Over time the agent will take less and less random actions and starts to act according to the Q-Table. To decide when the action has to be random and when it should be according to the Q-Table we introduce a variable called EPSILON. Epsilon will start at 1, meaning that 100% of actions are random and over time will decrease to a minimum like 0.1, meaning only 10% of the actions are random. This is called the "epsilon greedy strategy". Taking an action in a specific state will result in a reward. This reward has to be added to the corresponding action multiplied with a discount value called GAMMA. The discount value is to lower the learning rate of which action is good and which one is not.
+Example in pesudo code: 
+```
+state0 -> action (Move Left) -> Result -1:
+
+ActionSpace = Q-Table.getActionSpaceAt(state0)
+Q-Table.at(state0) += (ActionSpace + (0, 0, -1) * GAMMA )
+                    // (0, 0.34, -0.53) + (0, 0, -1) * 0.01
+                    // (0, 0.34, -0.53) + (0, 0, -0.01)
+                    // (0, 0.34, -0.54)
+```
+
+### Deep Q Learning
+As a game can have millions and billions of different states a Q-Table isn't the apropriate thing to use. Thats where the Deep Neural Network comes into place. We try to create a Neural Network that will decide which action to take in which state. We effectively swap the Q-Table with a Neural Network.
+As we work with pixel inputs we obviously need a convolutional neural network. Convolutional Neural Networks are used to recognize features in pictures. The structure of the neural network is the same as described in the [Mnih et al Paper 2015](https://www.cs.toronto.edu/~vmnih/docs/dqn.pdf). That means:
+1 convolutional input layer, 2 convolutional layers, 1 256 fully connected layer and 1 output layer, that has as many outputs as there are actions.
+In Keras:
+```python
+self.model = Sequential()
+self.model.add(Conv2D(filters=32,
+                      kernel_size=8,
+                      strides=(4, 4),
+                      activation="relu",
+                      input_shape=state_shape,
+                      data_format='channels_first'))
+self.model.add(Conv2D(filters=64,
+                      kernel_size=4,
+                      strides=(2, 2),
+                      padding="valid",
+                      activation="relu",
+                      input_shape=state_shape,
+                      data_format='channels_first'))
+self.model.add(Conv2D(filters=64,
+                      kernel_size=3,
+                      strides=(1, 1),
+                      padding="valid",
+                      activation="relu",
+                      input_shape=state_shape,
+                      data_format='channels_first'))
+self.model.add(Flatten())
+self.model.add(Dense(units=512,
+                     activation='relu'))
+self.model.add(Dense(units=len(possible_actions),
+                     activation='linear'))
+self.model.compile(loss=keras.losses.logcosh,
+                   optimizer=keras.optimizers.RMSprop(0.00025),
+                   metrics=['accuracy'])
+```
+As you can see the input is a 4 x 84 x 84 picture.
+As commonly done with pictures for convolutional neural network we preprocess our input. The standard input is a 210 x 160 x 3 picture.
+Firstly, to reduce dimensions, take away the color. As a result we have a 210 x 160 picture. Secondly, we downscale it t0 110 x 84. Then we crop it to 84 x 84. But the Input is 4 x 84 x 84. The reason for that is, you want to give the agent a feel for direction and speed. As example pong: If you have a single picture you can't tell if the ball is moving, if you have to consecutive pictures you can tell the direction of the ball, if you have 3 pictures, you can tell how fast the ball is moving. But as in the mnih et al 2015 paper shown we take 4 consecutive pictures.
+
+![Consecutive Frames](res/pictures/consecutiveframes.png)
+
+To achieve those 4 frames we just stack them. As mentioned in the mnih paper, we will let the agent perform an action and repeat that action 3 times. Therefore We have 4 consecutive frames and we put them together in one array with the dimensions (4, 84, 84). The result is a state consisting of 4 consecutive frames and a next_state being the next consecutive 4 frames.
+
+
+### Replay Memory
+As the agent should be able to learn to handle many differen situations. For that it needs a memory. To achieve a memory we implement something called a "Replay Buffer". A memory consists of the following things: An initial state, the action taken, the received reward, the resulting state and the info if the game was done after that action. As tuple: (State0, Action, Reward, State1, Done). In the mnih paper the replay buffer has a size of 1 million memories. My approach has one big drawback: 84 x 84 x 4 bytes = 28224 bytes per state or 26.29gb for 1 million states. I tried the method described in [this](https://github.com/fg91/Deep-Q-Learning/blob/master/DQN.ipynb) git repository. This approach uses the fact, that 4 consecutive frames are a state + 1 frame is the next_state. So you reduce the memory quite a bit. But it seems like it wasn't compatible with my architecture, so I threw it out without looking further into it. It probably had something to do that I used 4 frames for current_state and the next 4 frames for next_state, so 2 states took a total of 8 different frames. My second attempt was compressing with RLE. That worked quite well, but it was awkwardly slow, I tried to speed it up using multiprocessing in python but it wasn't successful. So I had to live with a maximum of 300.000 Memories max.
+
+
+### Training
+To train the agent a sample consisting of 32 random memories is taken from the memory. They are random to break correlations between consecutive memories, meaning that the agent doesn't learn to expect something if he performce a certain action in a certain state. As example: The agent plays Breakout: The first contact with ball and the bat always results in the ball moving to the right, hitting the wall, breaking one brick and landing on the left bottom corner. The agent would learn to always go to the left corner after hitting the ball, because it rather learns consecutive patterns than behaviour depending on the situation.
+
+To train properly it is recommended to have 2 Neural Networks, one that is trained (called model in my program) and one that creates targets (called target_model in my program). The reason for that is, that the target_model will have more consistent targets. If you create targets with the model you are training you could create a feedback loop, because we try to get closer to the target, but with every iteration the target moves further away.
+
+That covers all the theory, now to the architecture of the program.
+
+### Sources:
+* https://www.cs.toronto.edu/~vmnih/docs/dqn.pdf
+* https://web.stanford.edu/class/psych209/Readings/MnihEtAlHassibis15NatureControlDeepRL.pdf
+* https://medium.freecodecamp.org/an-introduction-to-reinforcement-learning-4339519de419
+* https://medium.freecodecamp.org/diving-deeper-into-reinforcement-learning-with-q-learning-c18d0db58efe
+* https://medium.freecodecamp.org/an-introduction-to-deep-q-learning-lets-play-doom-54d02d8017d8
+* https://medium.freecodecamp.org/improvements-in-deep-q-learning-dueling-double-dqn-prioritized-experience-replay-and-fixed-58b130cc5682
+* https://becominghuman.ai/lets-build-an-atari-ai-part-1-dqn-df57e8ff3b26
+* https://towardsdatascience.com/tutorial-double-deep-q-learning-with-dueling-network-architectures-4c1b3fb7f756
+* https://github.com/fg91/Deep-Q-Learning/blob/master/DQN.ipynb
+* https://github.com/gsurma/atari/blob/master/atari.py
+* https://github.com/gsurma/atari/blob/master/game_models/ddqn_game_model.py
+* https://towardsdatascience.com/atari-reinforcement-learning-in-depth-part-1-ddqn-ceaa762a546f
+* https://github.com/keras-rl/keras-rl
+* https://github.com/danielegrattarola/deep-q-atari
+* https://github.com/ShanHaoYu/Deep-Q-Network-Breakout
+* https://github.com/simoninithomas/Deep_reinforcement_learning_Course/blob/master/Deep%20Q%20Learning/Space%20Invaders/DQN%20Atari%20Space%20Invaders.ipynb
+* https://github.com/simoninithomas/Deep_reinforcement_learning_Course/blob/master/Deep%20Q%20Learning/Doom/.ipynb_checkpoints/Deep%20Q%20learning%20with%20Doom-checkpoint.ipynb
 
 ## The Journey
-
-#### Preface
-The goal is to create an AI Agent that plays Atari Games.
-When this semester started I already knew I wanted to do something like this, but I have never done anything with Neural Networks before,
-therefore I needed to learn how to work with them. I already knew the basic theory stuff, but never used something like Keras or Tensorlfow.
-So the first things to do were: Getting used to Python (I am still not used to it though), learn how Keras works and what it does.
-Before I started searching the webs on how to implement an AI Agent that plays games, I though about genetic algorithms for that, 
-I realised soon that there are better ways: Deep Q Nerual Networks. Therefore I started several times throughout this semester to
-learn about them.
-
 #### Day One
 Today is the 9th of march. I finally got time to start working on this project. It has been a few weeks since I read the last time
 about Deep Q NNs, so I started the day with reading again through the impressively good [articles](https://medium.freecodecamp.org/an-introduction-to-reinforcement-learning-4339519de419 "First Article of this series") 
@@ -128,6 +235,6 @@ As you can see, the lowest value is now -2, because I added punishment. It is no
 The agent had a memory of 300.000, which was taking around 10gb of RAM. The agent had a steady increase of rewards, after 1.000.000 steps it seemed to stagnate. That was because the agent started to do nothing for several rounds. After 200.000 steps it learned that he gets punished for doing nothing. Sometimes you could see him wait for a period of time and then start moving - fearing the upcoming punishment if he didn't move. After that it seems that he reached the peak of what he is capable of, so I stopped the training. While the agent was training I already implemented an RLE compressing and decompressing algorithm. Now I had the opportunity to test if everything worked - and it did. But it consumed far more memory than I anticipated. Even more than the uncompressed version. That was because I used tuples to save compressed data and added those tuples to a list. E.g. 124, 124, 124, 124, 124 would become (124, 5) => the number 124 is written down 5 times. I researched a little bit and learned that lists have quite the overhead because they are mutable containers (e.g. you can add items at runtime). Therefore I tried converting them into numpy arrays before I returned the compressed image. And finally it worked. It is quite slow, but it consumes far less memory than before. Now I'm trying to use multiprocessing to concurrently compress and decompress data. As I can mess up a lot of code I want to push the current state before starting to implement multiprocessing. It is not hard to go back to not using compression currently.
 
 #### Final Day
-3th of April.
+3rd of April.
 Firstly, I want to correct myself. I spoke of concurrency the last time, but that is not what I need. I needed parallelism, because my problem is CPU-Bound and not IO-Bound. In Python multithreading means running multiple threads on the same cpu core, while multiprocessing means running multiple processes on several cpus cores. Unfortunately I didn't achieve a speed that was acceptable so I have to live with only 300.000 memories with 16gb RAM. Maybe one day, when I know Python better I will be able to make it work.
 Two days ago I started a training session until today, unfortunately I had some little mistakes in my new architecture. As result the NN didn't learn anything. But I fixed that now. I also tested the new architecture with already trained agents and saw that it didn't work as planned. When Playing I loaded the weights to the target_model and not to the model, so I fixed that aswell. Now everything should be working hopefully. Now I will let the Pong-Agent train some more with the weights of the previously trained agent, as I don't have much time left unfortunately. I will write some documentation into the code now but I won't change any code unless I find another bug. I will now write a "how to use" and some of the theory behind DQN learning.
