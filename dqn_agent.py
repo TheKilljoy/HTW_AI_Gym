@@ -39,7 +39,7 @@ class DqnAgent:
         self.decay_rate = (EXPLORE_START - EXPLORE_END)/EXPLORE_STEPS
         self.doing_nothing_counter = 0
         self.is_doing_nothing = True
-        self.stacked_frames = np.array(np.zeros(input_shape), dtype=np.uint8)
+        self.stacked_frames = np.zeros(input_shape, dtype=np.uint8)
 
         self.is_continue = False
 
@@ -56,8 +56,8 @@ class DqnAgent:
         Initialize a new round.
         Returns the initial state
         """
-        state0 = self.env.reset()
-        self.stacked_frames = util.stack_frames(self.stacked_frames, state0, True, self.FRAME_SIZE)
+        state = self.env.reset()
+        self.stacked_frames = util.stack_frames(self.stacked_frames, state, True, self.FRAME_SIZE)
         return self.stacked_frames
     
     def __do_one_round(self, state0):
@@ -83,12 +83,12 @@ class DqnAgent:
                 self.env.render()
             if done:
                 break
-
+        #the new state after performing 4 actions
         state1 = self.stacked_frames
-        #if a life is lost
+        #if a life is lost punish the neural network
         if info['ale.lives'] < lifes:
             lifes = info['ale.lives']
-            frameskip_reward_accumulated += -1.0
+            frameskip_reward_accumulated = -1.0
             self.is_doing_nothing = True
 
         #check if it is the start of the round and the agent is doing nothing
@@ -174,16 +174,14 @@ class DqnAgent:
         Starts the pre-training session to fill up the memories
         of the agent.
         """
-        for i in range(self.PRETRAIN_LENGTH):
-            while self.memory.length() <= self.PRETRAIN_LENGTH:
-                if self.memory.length() == 0:
-                    state = self.__init_new_round()
-                state, reward, done, info = self.__do_one_round(state)
-
-                if done:
-                    state = self.__init_new_round()
-                    self.doing_nothing_counter = 0
-                    self.is_doing_nothing = True
+        while self.memory.length() <= self.PRETRAIN_LENGTH:
+            if self.memory.length() == 0:
+                state = self.__init_new_round()
+            state, reward, done, info = self.__do_one_round(state)
+            if done:
+                state = self.__init_new_round()
+                self.doing_nothing_counter = 0
+                self.is_doing_nothing = True
 
     def __train(self):
         """
@@ -194,16 +192,21 @@ class DqnAgent:
         batch = self.memory.sample(self.BATCH_SIZE)
         inputs = []
         targets = []
-        loss = 0
 
         for dataset in batch:
-            inputs.append(dataset['state0'].astype('float64'))
+            inputs.append(dataset['state0'].astype('float32'))
 
-            training_state1 = np.expand_dims(dataset['state1'].astype('float64'), axis=0)
+            training_state1 = np.expand_dims(dataset['state1'].astype('float32'), axis=0)
             training_state1_prediction = self.target_model.predict(training_state1)
             q_max = np.max(training_state1_prediction)
 
-            t = list(self.model.predict(np.expand_dims(dataset['state0'].astype('float64'), axis=0))[0])
+            t = list(self.model.predict(np.expand_dims(dataset['state0'].astype('float32'), axis=0))[0])
+            # do the bellman equation with discounted reward: 
+            # Reward = reward_t1 + reward_t2 * GAMMA
+            # We use t[dataset['action']], because self.model.predict gives us a list of the probability of each action e.q. [0.2, -0.5, 0.54, 0.6]
+            # and now we take with t[dataset['action']] the q value at position 'action' from the predicted outcome 
+            # and update it with the current q value and the predicted target q value
+            # (we update the "q-table")
             if dataset['done']:
                 t[dataset['action']] = dataset['reward']
             else:
@@ -239,7 +242,8 @@ class DqnAgent:
             self.__update_epsilon()
             self.__update_network(steps)
 
-            if((episode + 1) % 10 == 0):
+            #save everything every 10th episode.
+            if episode % 10 == 0:
                 f.close()
                 f = open("{0}_log.txt".format(self.env.unwrapped.spec.id), "a+")
                 self.model.write_weights("{0}_weights.h5".format(self.env.unwrapped.spec.id))

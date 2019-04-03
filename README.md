@@ -137,7 +137,14 @@ To train the agent a sample consisting of 32 random memories is taken from the m
 
 To train properly it is recommended to have 2 Neural Networks, one that is trained (called model in my program) and one that creates targets (called target_model in my program). The reason for that is, that the target_model will have more consistent targets. If you create targets with the model you are training you could create a feedback loop, because we try to get closer to the target, but with every iteration the target moves further away.
 
-That covers all the theory, now to the architecture of the program.
+### Used Hyperparameters
+The Hyperparameters I used for training are the standard parameters given, when you just start the program with an environment.
+
+### Afterwords
+I don't think the hpyer parameters I used are the best fitting, as my results weren't that good. You could see the agent was learning something, but he wasn't getting good at those games, unfortunately. I recommend getting up to 1.000.000 memories if you've got 32gb of ram or more. Also I had never the time to really finish a training session with 5.000.000 steps. But it happened now twice to me, that an ok-agent just started becoming horrible and doing nothing. I guess it is a lack of memory, but I'm not sure what caused this. As it takes at least 10 hours to be able to evaluate an agent it takes forever to find bugs and mistakes in the logic. I didn't expect the iteration time to be that big. To be able to tell if an agent is good it would've taken at least 4 or 5 days of training.
+After I've splitted my one-script-agent into several scripts and classes I didn't have time to properly test everything. I found little mistakes I made while writing those classes while testing it, but obviously had to restart the training session after fixing the bugs. I hope I found every bug, but as it takes several hours of training to be able to tell if the agent is learning something therefore I can't evaluate it yet.
+
+I have two ok-trained agents from previous training sessions. One you find [here](res/fourth_try/) - that is an Breakout-v0 agent. The other one is [this](res/third_pong/) - and Pong-v0 agent. You will have to rename the weights as described above. They were trained with my one-script agent. There are also graphs of their training sessions you can look at.
 
 ### Sources:
 * https://www.cs.toronto.edu/~vmnih/docs/dqn.pdf
